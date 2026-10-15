@@ -166,6 +166,24 @@ def rank(query: str, products: list[dict]) -> list[dict]:
     return [p for _, _, p in scored]
 
 
+def _key(title: str) -> str:
+    return "".join(ch for ch in title.lower() if ch.isalnum())[:50]
+
+
+def dedupe(products: list[dict]) -> list[dict]:
+    """The same item often appears twice (two sellers, same title). Keep the cheapest."""
+    best: dict[str, dict] = {}
+    order: list[str] = []
+    for p in products:
+        k = _key(p["title"])
+        if k not in best:
+            order.append(k)
+            best[k] = p
+        elif p["price"] < best[k]["price"]:
+            best[k] = p
+    return [best[k] for k in order]
+
+
 def search(query: str, max_price: float | None = None, limit: int = 8) -> list[dict]:
     raws: list[dict]
     if config.CHANNEL3_API_KEY:
@@ -185,6 +203,7 @@ def search(query: str, max_price: float | None = None, limit: int = 8) -> list[d
         raws = _demo_search(query, max_price)
 
     products = [p for p in (normalise(r) for r in raws) if p and p["price"] and p.get("in_stock", True)]
+    products = dedupe(products)
     products = rank(query, products)[:limit]
 
     if config.DEMO_INJECTION and ("kettle" in query.lower() or not products):

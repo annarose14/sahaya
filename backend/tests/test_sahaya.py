@@ -290,3 +290,68 @@ def test_agent_presents_only_chosen_options(monkeypatch):
     assert [p["id"] for p in out["products"]] == ["demo-clock"]
     out = agent.chat("sid999", "buy the kettle")
     assert out["purchase"] is None  # not presented, so it can't be proposed
+
+
+def test_dedupe_keeps_cheapest_of_same_title():
+    items = [{"title": "Atomic Talking Watch", "price": 31.99}, {"title": "Atomic talking watch!", "price": 31.90},
+             {"title": "Bluetooth Watch", "price": 38.99}]
+    out = catalog.dedupe(items)
+    assert [p["price"] for p in out] == [31.90, 38.99]
+
+
+def _agent_with_clocks(script):
+    svc = PurchaseService(Store(), FakePayPal())
+    return svc, Agent(svc, llm=lambda msgs: script.pop(0) if isinstance(script[0], dict) else script.pop(0)(msgs))
+
+
+def test_propose_by_option_number(monkeypatch):
+    monkeypatch.setattr(config, "CHANNEL3_API_KEY", "")
+    monkeypatch.setattr(config, "DEMO_INJECTION", False)
+    script = [
+        {"tool_calls": [call("1", "search_products", {"query": "kettle clock magnifier"})]},
+        {"tool_calls": [call("2", "present_options", {"product_ids": ["demo-clock", "demo-kettle"]})]},
+        {"content": "Option 1 clock, option 2 kettle."},
+        {"tool_calls": [call("3", "propose_purchase", {"option": 2, "quantity": 1})]},
+        {"content": "Say yes to pay."},
+    ]
+    svc, agent = _agent_with_clocks(script)
+    agent.chat("sidopt", "find things")
+    out = agent.chat("sidopt", "option 2")
+    assert out["purchase"]["product"]["id"] == "demo-kettle"
+    assert out["purchase"]["status"] == "awaiting_confirm"
+
+
+def test_screen_note_tells_model_what_is_shown(monkeypatch):
+    monkeypatch.setattr(config, "CHANNEL3_API_KEY", "")
+    seen = []
+    script = [
+        {"tool_calls": [call("1", "search_products", {"query": "clock"})]},
+        {"tool_calls": [call("2", "present_options", {"product_ids": ["demo-clock"]})]},
+        {"content": "Option 1."},
+        {"content": "Which one?"},
+    ]
+
+    def llm(msgs):
+        seen.append(msgs)
+        return script.pop(0)
+
+    svc = PurchaseService(Store(), FakePayPal())
+    agent = Agent(svc, llm=llm)
+    agent.chat("sidnote", "clock")
+    agent.chat("sidnote", "tell me again")
+    notes = [m["content"] for m in seen[-1] if m["role"] == "system"]
+    assert any("Option 1: Talking alarm clock" in n for n in notes)
+
+
+def test_llm_failure_gives_friendly_reply_and_clean_history(monkeypatch):
+    from app.agent import LLMError, FALLBACK_REPLY
+
+    def broken(msgs):
+        raise LLMError("Groq 400: tool_use_failed")
+
+    svc = PurchaseService(Store(), FakePayPal())
+    agent = Agent(svc, llm=broken)
+    out = agent.chat("sidfail", "hello")
+    assert out["reply"] == FALLBACK_REPLY
+    roles = [m["role"] for m in svc.store.session("sidfail")["messages"]]
+    assert roles == ["user", "assistant"]

@@ -1,6 +1,8 @@
 """Sahaya API."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -10,6 +12,9 @@ from . import config
 from .agent import Agent
 from .paypal import PayPalClient, PayPalError
 from .service import FlowError, PurchaseService, Store
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("sahaya")
 
 app = FastAPI(title="Sahaya API", version="0.1.0")
 app.add_middleware(
@@ -63,6 +68,9 @@ def chat(body: ChatIn):
         return agent.chat(body.session_id, body.message)
     except RuntimeError as e:
         raise HTTPException(503, str(e))
+    except Exception as e:  # always answer with JSON so the browser shows a real message
+        log.exception("chat failed")
+        raise HTTPException(500, f"{type(e).__name__}: {str(e)[:200]}")
 
 
 @app.get("/api/purchases/{pid}")
