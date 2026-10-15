@@ -261,3 +261,20 @@ def test_injection_in_key_features_is_caught():
     p = catalog.normalise(raw)
     d = policy.evaluate(p, 1, 0, policy.Settings(150, 500, 5, 1.5))
     assert d.outcome == policy.BLOCK
+
+
+def _p(title, features=()):
+    return {"title": title, "features": list(features), "price": 10}
+
+
+def test_rank_keeps_relevant_results():
+    items = [_p("Digital alarm clock with cartoon night light"), _p("Talking Alarm Clock"),
+             _p("Speaking clock", ["Talking time announcement", "Alarm"])]
+    out = catalog.rank("I need a talking alarm clock", items)
+    titles = [p["title"] for p in out]
+    assert titles == ["Talking Alarm Clock", "Speaking clock"]
+
+
+def test_rank_falls_back_when_nothing_matches():
+    items = [_p("Kettle"), _p("Toaster")]
+    assert len(catalog.rank("umbrella", items)) == 2

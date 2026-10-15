@@ -139,10 +139,39 @@ def _demo_search(query: str, max_price: float | None) -> list[dict]:
     return [p for p in items if max_price is None or p["price"] <= max_price]
 
 
-def search(query: str, max_price: float | None = None, limit: int = 4) -> list[dict]:
+_STOP = {"need", "want", "looking", "something", "some", "with", "that", "for", "and", "the", "can", "use",
+         "please", "buy", "get", "find", "me", "my", "new", "good", "cheap", "best"}
+
+
+def _words(text: str) -> set[str]:
+    return {w.strip(".,!?'\"()").rstrip("s") for w in text.lower().split() if len(w) > 2} - _STOP
+
+
+def rank(query: str, products: list[dict]) -> list[dict]:
+    """Keep the results that actually match the request, best first.
+
+    Channel3 is broad: "talking alarm clock" also returns cartoon night lights.
+    A product scores by how many of the query's words appear in its title and
+    features. If nothing matches every word we fall back to the best partial
+    matches, so the person always hears something.
+    """
+    q = _words(query)
+    if not q:
+        return products
+    scored = []
+    for i, p in enumerate(products):
+        text = _words(f"{p['title']} {' '.join(p.get('features', []))}")
+        scored.append((len(q & text), -i, p))
+    best = max((s for s, _, _ in scored), default=0)
+    keep = [x for x in scored if x[0] == best and best > 0] or scored
+    keep.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [p for _, _, p in keep]
+
+
+def search(query: str, max_price: float | None = None, limit: int = 3) -> list[dict]:
     raws: list[dict]
     if config.CHANNEL3_API_KEY:
-        body: dict = {"query": query, "limit": limit}
+        body: dict = {"query": query, "limit": 10}
         if max_price:
             body["filters"] = {"price": {"max_price": max_price}, "availability": ["InStock"]}
         r = requests.post(
@@ -157,8 +186,10 @@ def search(query: str, max_price: float | None = None, limit: int = 4) -> list[d
     else:
         raws = _demo_search(query, max_price)
 
-    if config.DEMO_INJECTION and ("kettle" in query.lower() or not raws):
-        raws = [INJECTED_PRODUCT] + list(raws)
+    products = [p for p in (normalise(r) for r in raws) if p and p["price"] and p.get("in_stock", True)]
+    products = rank(query, products)[:limit]
 
-    products = [p for p in (normalise(r) for r in raws) if p and p["price"]]
-    return products[:limit]
+    if config.DEMO_INJECTION and ("kettle" in query.lower() or not products):
+        injected = normalise(INJECTED_PRODUCT)
+        products = [injected] + products[: limit - 1]
+    return products

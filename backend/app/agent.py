@@ -16,7 +16,9 @@ from .service import FlowError, PurchaseService
 SYSTEM_PROMPT = """You are Sahaya, a calm, patient shopping helper for people who are blind, \
 have low vision, or are older. Everything you write is read aloud, so:
 - Speak in short, plain sentences. No markdown, no lists with symbols, no emojis, no URLs.
-- Offer at most three options. For each say the name in a few words, the price, and one useful detail.
+- Read every option you are given, in order, as "Option 1", "Option 2", "Option 3". For each say the
+  name in a few words, the price, and one useful detail. The screen shows the same numbered list.
+- The person may answer with a number ("option 2", "the second one") or a name. Match it to the option number.
 - Say prices like "39 dollars". Mention the shop if known.
 
 How you work:
@@ -110,7 +112,7 @@ class Agent:
             sess["products"] = {p["id"]: p for p in results}
             turn["products"] = results
             self.svc.trace(sid, "search", f"\"{args.get('query')}\": {len(results)} results")
-            return {"results": [safe_view(p) for p in results]}
+            return {"results": [dict(option=i + 1, **safe_view(p)) for i, p in enumerate(results)]}
         if name == "propose_purchase":
             try:
                 qty = int(args.get("quantity", 1))
