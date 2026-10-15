@@ -22,7 +22,10 @@ have low vision, or are older. Everything you write is read aloud, so:
 - Say prices like "39 dollars". Mention the shop if known.
 
 How you work:
-- Use search_products to find items. Ask one short question if the request is unclear.
+- Use search_products to find candidates. Ask one short question if the request is unclear.
+- Then ALWAYS call present_options with the ids of up to three candidates that genuinely fit the request,
+  best first. Skip toys, cartoon or character themed items, accessories and anything unrelated.
+  Only presented options are shown on screen and can be bought.
 - When the person picks an option, call propose_purchase with its id and quantity.
 - You can never pay. After propose_purchase, tell the person what happens next based on the status:
   awaiting_confirm: summarise item, quantity and total, then say "Say yes to pay with PayPal, or no to cancel."
@@ -43,8 +46,15 @@ TOOLS = [
         }, "required": ["query"]},
     }},
     {"type": "function", "function": {
+        "name": "present_options",
+        "description": "Show the person up to three of the search candidates, in order. Required after every search.",
+        "parameters": {"type": "object", "properties": {
+            "product_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+        }, "required": ["product_ids"]},
+    }},
+    {"type": "function", "function": {
         "name": "propose_purchase",
-        "description": "Propose buying a product from the latest search. Safety rules then decide if it can go ahead. This does not pay.",
+        "description": "Propose buying one of the presented options. Safety rules then decide if it can go ahead. This does not pay.",
         "parameters": {"type": "object", "properties": {
             "product_id": {"type": "string"},
             "quantity": {"type": "integer", "minimum": 1},
@@ -62,7 +72,8 @@ TOOLS = [
     }},
 ]
 
-MAX_STEPS = 5
+MAX_STEPS = 6
+MAX_OPTIONS = 3
 HISTORY = 14
 
 
@@ -109,10 +120,14 @@ class Agent:
         sess = self.svc.store.session(sid)
         if name == "search_products":
             results = catalog.search(str(args.get("query", "")), args.get("max_price"))
-            sess["products"] = {p["id"]: p for p in results}
-            turn["products"] = results
-            self.svc.trace(sid, "search", f"\"{args.get('query')}\": {len(results)} results")
-            return {"results": [dict(option=i + 1, **safe_view(p)) for i, p in enumerate(results)]}
+            sess["candidates"] = {p["id"]: p for p in results}
+            turn["searched"] = True
+            self.svc.trace(sid, "search", f"\"{args.get('query')}\": {len(results)} candidates")
+            return {"candidates": [safe_view(p) for p in results],
+                    "next": "Call present_options with up to three ids that fit."}
+        if name == "present_options":
+            ids = [str(i) for i in (args.get("product_ids") or [])]
+            return self._present(sid, ids, turn)
         if name == "propose_purchase":
             try:
                 qty = int(args.get("quantity", 1))
@@ -131,11 +146,29 @@ class Agent:
             return {"purchase_id": p["id"], "status": p["status"]}
         return {"error": f"unknown tool {name}"}
 
+    def _present(self, sid: str, ids: list[str], turn: dict) -> dict:
+        sess = self.svc.store.session(sid)
+        cands = sess.get("candidates", {})
+        chosen, seen = [], set()
+        for i in ids:
+            if i in cands and i not in seen:
+                chosen.append(cands[i])
+                seen.add(i)
+        chosen = chosen[:MAX_OPTIONS]
+        if not chosen:
+            return {"error": "None of those ids are in the latest search. Use ids from the candidates."}
+        sess["products"] = {p["id"]: p for p in chosen}
+        turn["products"] = chosen
+        turn["presented"] = True
+        self.svc.trace(sid, "present", ", ".join(p["title"][:40] for p in chosen))
+        return {"options": [dict(option=n + 1, **safe_view(p)) for n, p in enumerate(chosen)],
+                "next": "Read these to the person as Option 1, Option 2, Option 3."}
+
     def chat(self, sid: str, text: str) -> dict:
         sess = self.svc.store.session(sid)
         sess["messages"].append({"role": "user", "content": text[:1000]})
         self.svc.trace(sid, "user", text[:120])
-        turn: dict = {"products": None, "purchase": None}
+        turn: dict = {"products": None, "purchase": None, "searched": False, "presented": False}
         msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + sess["messages"][-HISTORY:]
         # never start history on a dangling tool message
         while len(msgs) > 1 and msgs[1].get("role") == "tool":
@@ -163,6 +196,10 @@ class Agent:
                 tool_msg = {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result)}
                 msgs.append(tool_msg)
                 sess["messages"].append(tool_msg)
+        if turn["searched"] and not turn["presented"]:
+            # The model skipped present_options: show the best ranked candidates so screen and voice still match.
+            top = list(sess.get("candidates", {}))[:MAX_OPTIONS]
+            self._present(sid, top, turn)
         sess["messages"].append({"role": "assistant", "content": reply})
         self.svc.trace(sid, "reply", reply[:120])
-        return {"reply": reply, **turn}
+        return {"reply": reply, "products": turn["products"], "purchase": turn["purchase"]}

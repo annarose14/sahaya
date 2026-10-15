@@ -152,8 +152,8 @@ def rank(query: str, products: list[dict]) -> list[dict]:
 
     Channel3 is broad: "talking alarm clock" also returns cartoon night lights.
     A product scores by how many of the query's words appear in its title and
-    features. If nothing matches every word we fall back to the best partial
-    matches, so the person always hears something.
+    features. This only orders the candidates; the agent then picks the ones
+    that truly fit (it knows "speaking" means "talking", we don't).
     """
     q = _words(query)
     if not q:
@@ -162,13 +162,11 @@ def rank(query: str, products: list[dict]) -> list[dict]:
     for i, p in enumerate(products):
         text = _words(f"{p['title']} {' '.join(p.get('features', []))}")
         scored.append((len(q & text), -i, p))
-    best = max((s for s, _, _ in scored), default=0)
-    keep = [x for x in scored if x[0] == best and best > 0] or scored
-    keep.sort(key=lambda x: (x[0], x[1]), reverse=True)
-    return [p for _, _, p in keep]
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [p for _, _, p in scored]
 
 
-def search(query: str, max_price: float | None = None, limit: int = 3) -> list[dict]:
+def search(query: str, max_price: float | None = None, limit: int = 8) -> list[dict]:
     raws: list[dict]
     if config.CHANNEL3_API_KEY:
         body: dict = {"query": query, "limit": 10}

@@ -218,7 +218,7 @@ def test_agent_search_then_propose(monkeypatch):
     out = agent.chat("sid123", "I need a kettle")
     assert out["products"] and any(p["simulated"] for p in out["products"])
     tool_payload = json.loads(seen[1][-1]["content"])
-    flagged = [r for r in tool_payload["results"] if r["listing_flagged"]]
+    flagged = [r for r in tool_payload["candidates"] if r["listing_flagged"]]
     assert flagged and "ignore previous" not in json.dumps(tool_payload).lower()
 
     out = agent.chat("sid123", "buy the cheapest one, five of them")
@@ -267,14 +267,26 @@ def _p(title, features=()):
     return {"title": title, "features": list(features), "price": 10}
 
 
-def test_rank_keeps_relevant_results():
+def test_rank_orders_by_match_and_keeps_everything():
     items = [_p("Digital alarm clock with cartoon night light"), _p("Talking Alarm Clock"),
              _p("Speaking clock", ["Talking time announcement", "Alarm"])]
-    out = catalog.rank("I need a talking alarm clock", items)
-    titles = [p["title"] for p in out]
-    assert titles == ["Talking Alarm Clock", "Speaking clock"]
+    titles = [p["title"] for p in catalog.rank("I need a talking alarm clock", items)]
+    assert titles[0] == "Talking Alarm Clock" and len(titles) == 3
 
 
-def test_rank_falls_back_when_nothing_matches():
-    items = [_p("Kettle"), _p("Toaster")]
-    assert len(catalog.rank("umbrella", items)) == 2
+def test_agent_presents_only_chosen_options(monkeypatch):
+    monkeypatch.setattr(config, "CHANNEL3_API_KEY", "")
+    monkeypatch.setattr(config, "DEMO_INJECTION", False)
+    svc = PurchaseService(Store(), FakePayPal())
+    script = [
+        {"tool_calls": [call("1", "search_products", {"query": "clock"})]},
+        {"tool_calls": [call("2", "present_options", {"product_ids": ["demo-clock", "nope"]})]},
+        {"content": "Option 1, a talking clock, 24 dollars 50."},
+        {"tool_calls": [call("3", "propose_purchase", {"product_id": "demo-kettle", "quantity": 1})]},
+        {"content": "That one isn't on your list."},
+    ]
+    agent = Agent(svc, llm=lambda msgs: script.pop(0))
+    out = agent.chat("sid999", "a talking clock")
+    assert [p["id"] for p in out["products"]] == ["demo-clock"]
+    out = agent.chat("sid999", "buy the kettle")
+    assert out["purchase"] is None  # not presented, so it can't be proposed
