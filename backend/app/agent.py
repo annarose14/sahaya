@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 
 import requests
 
@@ -78,7 +80,8 @@ TOOLS = [
 
 MAX_STEPS = 6
 MAX_OPTIONS = 3
-HISTORY = 14
+HISTORY = 10          # messages of past conversation sent to the model
+OLD_TOOL_CHARS = 300  # tool results from earlier turns are trimmed to save tokens
 FALLBACK_REPLY = "Sorry, I had trouble with that. Could you say it again?"
 
 
@@ -86,18 +89,44 @@ class LLMError(Exception):
     pass
 
 
-def _llm(messages: list[dict]) -> dict:
-    if not config.GROQ_API_KEY:
-        raise RuntimeError("GROQ_API_KEY is missing. Add it to .env")
-    r = requests.post(
+def _retry_after(text: str) -> float:
+    """Groq says 'Please try again in 6.6s' or 'in 420ms'."""
+    m = re.search(r"try again in ([\d.]+)(ms|s)", text)
+    if not m:
+        return 2.0
+    v = float(m.group(1))
+    return v / 1000 if m.group(2) == "ms" else v
+
+
+def _groq(model: str, messages: list[dict]) -> requests.Response:
+    return requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
-        json={"model": config.GROQ_MODEL, "messages": messages, "tools": TOOLS,
-              "tool_choice": "auto", "temperature": 0.3, "max_tokens": 1500,
+        json={"model": model, "messages": messages, "tools": TOOLS,
+              "tool_choice": "auto", "temperature": 0.3, "max_tokens": 1200,
               # gpt-oss models think before answering; keep it short so replies stay fast
-              **({"reasoning_effort": "low"} if "gpt-oss" in config.GROQ_MODEL else {})},
+              **({"reasoning_effort": "low"} if "gpt-oss" in model else {})},
         timeout=60,
     )
+
+
+def _llm(messages: list[dict]) -> dict:
+    """One model call. On a rate limit: wait briefly and retry, then try the backup model."""
+    if not config.GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is missing. Add it to .env")
+    attempts = [config.GROQ_MODEL, config.GROQ_MODEL]
+    if config.GROQ_FALLBACK_MODEL and config.GROQ_FALLBACK_MODEL != config.GROQ_MODEL:
+        attempts.append(config.GROQ_FALLBACK_MODEL)
+    r = None
+    for i, model in enumerate(attempts):
+        r = _groq(model, messages)
+        if r.status_code != 429:
+            break
+        wait = _retry_after(r.text)
+        log.warning("Groq rate limit on %s, wait %.1fs", model, wait)
+        if i == 0 and wait <= 8:
+            time.sleep(wait + 0.2)
+        # otherwise go straight to the next attempt (the backup model has its own limit)
     if r.status_code >= 400:
         raise LLMError(f"Groq {r.status_code}: {r.text[:300]}")
     msg = r.json()["choices"][0]["message"]
@@ -110,12 +139,12 @@ def safe_view(p: dict) -> dict:
     flags = policy.scan_untrusted(policy.untrusted_text(p))
     return {
         "id": p["id"],
-        "title": "[hidden: listing contains instructions]" if flags else p["title"],
+        "title": "[hidden: listing contains instructions]" if flags else p["title"][:100],
         "brand": p["brand"],
         "price": p["price"],
         "currency": p["currency"],
         "shop": p["retailer"],
-        "features": [] if flags else p.get("features", [])[:3],
+        "features": [] if flags else [f[:80] for f in p.get("features", [])[:2]],
         "listing_flagged": bool(flags),
     }
 
@@ -130,7 +159,7 @@ class Agent:
     def _run_tool(self, sid: str, name: str, args: dict, turn: dict) -> dict:
         sess = self.svc.store.session(sid)
         if name == "search_products":
-            results = catalog.search(str(args.get("query", "")), args.get("max_price"))
+            results = catalog.search(str(args.get("query", "")), args.get("max_price"), limit=6)
             sess["candidates"] = {p["id"]: p for p in results}
             turn["searched"] = True
             self.svc.trace(sid, "search", f"\"{args.get('query')}\": {len(results)} candidates")
@@ -212,6 +241,13 @@ class Agent:
             msgs = msgs[1:]
         return msgs
 
+    @staticmethod
+    def _compact(messages: list[dict], since: int):
+        """After a turn, trim that turn's big tool results. The screen note keeps what matters."""
+        for m in messages[since:]:
+            if m.get("role") == "tool" and len(m["content"]) > OLD_TOOL_CHARS:
+                m["content"] = m["content"][:OLD_TOOL_CHARS] + " ...(trimmed)"
+
     def _ask(self, sid: str, msgs: list[dict], text: str) -> dict:
         """Call the model. If it fails (bad tool call, rate limit), retry once with a short history."""
         try:
@@ -224,6 +260,7 @@ class Agent:
 
     def chat(self, sid: str, text: str) -> dict:
         sess = self.svc.store.session(sid)
+        start = len(sess["messages"])
         sess["messages"].append({"role": "user", "content": text[:1000]})
         self.svc.trace(sid, "user", text[:120])
         turn: dict = {"products": None, "purchase": None, "searched": False, "presented": False}
@@ -271,5 +308,6 @@ class Agent:
             # The model skipped present_options: show the best ranked candidates so screen and voice still match.
             self._present(sid, list(sess.get("candidates", {}))[:MAX_OPTIONS], turn)
         sess["messages"].append({"role": "assistant", "content": reply})
+        self._compact(sess["messages"], start)
         self.svc.trace(sid, "reply", reply[:120])
         return {"reply": reply, "products": turn["products"], "purchase": turn["purchase"]}

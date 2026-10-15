@@ -211,7 +211,7 @@ def test_agent_search_then_propose(monkeypatch):
     seen = []
 
     def fake_llm(msgs):
-        seen.append(msgs)
+        seen.append(json.loads(json.dumps(msgs)))  # snapshot: history is trimmed after the turn
         return script.pop(0)
 
     agent = Agent(svc, llm=fake_llm)
@@ -355,3 +355,48 @@ def test_llm_failure_gives_friendly_reply_and_clean_history(monkeypatch):
     assert out["reply"] == FALLBACK_REPLY
     roles = [m["role"] for m in svc.store.session("sidfail")["messages"]]
     assert roles == ["user", "assistant"]
+
+
+def test_retry_after_parsing():
+    from app.agent import _retry_after
+    assert _retry_after("Please try again in 420ms. Need") == 0.42
+    assert _retry_after("Please try again in 6.6225s. Need") == 6.6225
+
+
+def test_rate_limit_waits_then_uses_backup_model(monkeypatch):
+    from app import agent as A
+
+    class R:
+        def __init__(self, code, body):
+            self.status_code, self.text, self._body = code, json.dumps(body), body
+
+        def json(self):
+            return self._body
+
+    calls = []
+
+    def fake_groq(model, messages):
+        calls.append(model)
+        if model == config.GROQ_MODEL:
+            return R(429, {"error": {"message": "Please try again in 20s."}})
+        return R(200, {"choices": [{"message": {"content": "hi", "reasoning": "secret"}}]})
+
+    monkeypatch.setattr(config, "GROQ_API_KEY", "k")
+    monkeypatch.setattr(config, "GROQ_FALLBACK_MODEL", "backup-model")
+    monkeypatch.setattr(A, "_groq", fake_groq)
+    msg = A._llm([{"role": "user", "content": "x"}])
+    assert msg == {"content": "hi"}
+    assert calls[-1] == "backup-model"
+
+
+def test_old_tool_results_are_trimmed(monkeypatch):
+    monkeypatch.setattr(config, "CHANNEL3_API_KEY", "")
+    script = [
+        {"tool_calls": [call("1", "search_products", {"query": "clock"})]},
+        {"tool_calls": [call("2", "present_options", {"product_ids": ["demo-clock"]})]},
+        {"content": "Option 1."},
+    ]
+    svc = PurchaseService(Store(), FakePayPal())
+    Agent(svc, llm=lambda m: script.pop(0)).chat("sidtrim", "clock")
+    tools = [m for m in svc.store.session("sidtrim")["messages"] if m["role"] == "tool"]
+    assert tools and all(len(m["content"]) <= 300 + len(" ...(trimmed)") for m in tools)
