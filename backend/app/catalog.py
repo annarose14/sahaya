@@ -36,47 +36,77 @@ def _price_of(obj) -> tuple[float | None, str | None]:
     return None, None
 
 
+def _name(v) -> str:
+    """Brand or retailer can be a string, a dict, or a list of either."""
+    if isinstance(v, list):
+        return ", ".join(n for n in (_name(x) for x in v) if n)
+    if isinstance(v, dict):
+        return str(v.get("name") or v.get("domain") or "")
+    return str(v or "")
+
+
+def _image(raw: dict):
+    images = raw.get("images") or []
+    main = next((i for i in images if isinstance(i, dict) and i.get("is_main_image")), None)
+    first = main or (images[0] if images else None)
+    if isinstance(first, dict):
+        return first.get("cleaned_url") or first.get("url")
+    return first or raw.get("image_url") or raw.get("image")
+
+
 def normalise(raw: dict) -> dict | None:
+    """Turn one Channel3 product (or a demo product) into Sahaya's simple shape.
+
+    Channel3 puts prices inside offers: one offer per retailer, each with
+    {"price": {"price": 130.0, "currency": "USD"}, "domain": ..., "url": ...}.
+    We pick the cheapest in stock offer and keep every offer price for the
+    fair price check.
+    """
     title = raw.get("title") or raw.get("name")
     if not title:
         return None
-    offers = raw.get("offers") or []
-    price, currency = _price_of(raw.get("price"))
-    other_prices = []
-    url = raw.get("url") or raw.get("buy_url") or raw.get("link")
-    retailer = raw.get("retailer") or raw.get("merchant")
-    for o in offers if isinstance(offers, list) else []:
+
+    offers = []
+    for o in raw.get("offers") or []:
+        if not isinstance(o, dict):
+            continue
         p, c = _price_of(o.get("price", o))
-        if p is not None:
-            other_prices.append(p)
-            if price is None:
-                price, currency = p, c
-                url = url or o.get("url") or o.get("buy_url")
-                retailer = retailer or o.get("domain") or o.get("retailer") or o.get("merchant")
-    if isinstance(retailer, dict):
-        retailer = retailer.get("name") or retailer.get("domain")
-    images = raw.get("images") or []
-    image = raw.get("image_url") or raw.get("image")
-    if not image and images:
-        first = images[0]
-        image = first.get("url") if isinstance(first, dict) else first
-    brand = raw.get("brand")
-    if isinstance(brand, dict):
-        brand = brand.get("name")
-    if isinstance(brand, list):
-        brand = ", ".join(str(b.get("name", b)) if isinstance(b, dict) else str(b) for b in brand)
+        if p is None or p <= 0:
+            continue
+        offers.append({
+            "price": p,
+            "currency": c,
+            "url": o.get("url") or o.get("buy_url"),
+            "retailer": _name(o.get("domain") or o.get("retailer") or o.get("merchant")),
+            "in_stock": str(o.get("availability") or "InStock").lower() in ("instock", "in_stock", "limitedavailability"),
+        })
+
+    price, currency = _price_of(raw.get("price"))
+    url = raw.get("url") or raw.get("buy_url") or raw.get("link")
+    retailer = _name(raw.get("retailer") or raw.get("merchant"))
+    if offers:
+        pool = [o for o in offers if o["in_stock"]] or offers
+        best = min(pool, key=lambda o: o["price"])
+        if price is None:
+            price, currency = best["price"], best["currency"]
+            url = url or best["url"]
+            retailer = retailer or best["retailer"]
+
+    features = [str(f)[:120] for f in (raw.get("key_features") or []) if f][:4]
     pid = str(raw.get("id") or hashlib.sha1(title.encode()).hexdigest()[:12])
     return {
         "id": pid,
         "title": str(title)[:160],
-        "brand": brand or "",
+        "brand": _name(raw.get("brand") or raw.get("brands")),
         "price": price,
         "currency": (currency or "USD").upper(),
-        "image": image,
+        "image": _image(raw),
         "url": url,
-        "retailer": retailer or "",
+        "retailer": retailer,
         "description": str(raw.get("description") or "")[:600],
-        "other_prices": other_prices,
+        "features": features,
+        "other_prices": [o["price"] for o in offers],
+        "in_stock": any(o["in_stock"] for o in offers) if offers else True,
         "simulated": bool(raw.get("simulated")),
     }
 

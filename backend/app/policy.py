@@ -39,6 +39,13 @@ def scan_untrusted(text: str) -> list[str]:
     return hits
 
 
+def untrusted_text(product: dict) -> str:
+    """All seller written text for one product."""
+    parts = [str(product.get("title", "")), str(product.get("description", ""))]
+    parts += [str(f) for f in product.get("features") or []]
+    return " ".join(parts)
+
+
 @dataclass
 class Settings:
     daily_cap: float
@@ -86,7 +93,7 @@ def evaluate(product: dict, quantity: int, spent_today: float, s: Settings) -> D
 
     total = round(float(price) * (quantity if qty_ok else 1), 2)
 
-    flags = scan_untrusted(" ".join(str(product.get(k, "")) for k in ("title", "description")))
+    flags = scan_untrusted(untrusted_text(product))
     check("listing_safe", not flags, "; ".join(flags) or "no instructions found in listing")
     if flags:
         block.append("This listing contains hidden instructions aimed at me, so I won't buy it.")

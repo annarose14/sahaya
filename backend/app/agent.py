@@ -84,7 +84,7 @@ def _llm(messages: list[dict]) -> dict:
 
 def safe_view(p: dict) -> dict:
     """What the model is allowed to see about a product."""
-    flags = policy.scan_untrusted(f"{p['title']} {p['description']}")
+    flags = policy.scan_untrusted(policy.untrusted_text(p))
     return {
         "id": p["id"],
         "title": "[hidden: listing contains instructions]" if flags else p["title"],
@@ -92,6 +92,8 @@ def safe_view(p: dict) -> dict:
         "price": p["price"],
         "currency": p["currency"],
         "shop": p["retailer"],
+        "features": [] if flags else p.get("features", [])[:3],
+        "in_stock": p.get("in_stock", True),
         "listing_flagged": bool(flags),
     }
 
