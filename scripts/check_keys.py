@@ -41,7 +41,7 @@ def check_channel3():
 def check_groq():
     r = requests.post("https://api.groq.com/openai/v1/chat/completions",
                       headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}"},
-                      json={"model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                      json={"model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
                             "messages": [{"role": "user", "content": "Reply with exactly: Groq is working"}]},
                       timeout=30)
     r.raise_for_status()

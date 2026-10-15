@@ -71,11 +71,15 @@ def _llm(messages: list[dict]) -> dict:
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
         json={"model": config.GROQ_MODEL, "messages": messages, "tools": TOOLS,
-              "tool_choice": "auto", "temperature": 0.3, "max_tokens": 600},
+              "tool_choice": "auto", "temperature": 0.3, "max_tokens": 1500,
+              # gpt-oss models think before answering; keep it short so replies stay fast
+              **({"reasoning_effort": "low"} if "gpt-oss" in config.GROQ_MODEL else {})},
         timeout=60,
     )
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]
+    msg = r.json()["choices"][0]["message"]
+    msg.pop("reasoning", None)  # never send the model's private reasoning back into history
+    return msg
 
 
 def safe_view(p: dict) -> dict:
