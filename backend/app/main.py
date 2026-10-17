@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,21 +29,40 @@ store = Store()
 service = PurchaseService(store, PayPalClient())
 agent = Agent(service)
 
+if os.getenv("SAHAYA_FAKE") == "1":
+    # Offline mode for UI tests and demos without keys: fake PayPal, scripted AI, demo catalog.
+    from .fakes import FakePayPal, ScriptedShopper
+
+    config.CHANNEL3_API_KEY = ""
+    config.GROQ_API_KEY = "fake"
+    service.paypal = FakePayPal(approve_base=f"{config.BACKEND_URL}/fake-paypal")
+    agent.llm = ScriptedShopper()
+    log.warning("SAHAYA_FAKE=1: fake PayPal and scripted AI, no real payments or model calls")
+
+    @app.get("/fake-paypal/{pid}")
+    def fake_paypal(pid: str):
+        """Pretend PayPal approval: goes straight to the normal return URL."""
+        return RedirectResponse(f"{config.BACKEND_URL}/paypal/return?pid={pid}")
+
 
 class ChatIn(BaseModel):
     session_id: str = Field(min_length=6, max_length=64)
-    message: str = Field(min_length=1, max_length=1000)
+    message: str = Field(min_length=1, max_length=2000)
 
 
 class FamilyIn(BaseModel):
     approve: bool
 
 
+class DemoIn(BaseModel):
+    on: bool
+
+
 def _guard(fn, *args):
     try:
         return service.public(fn(*args))
     except FlowError as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(404 if "not found" in str(e).lower() else 409, str(e))
     except PayPalError as e:
         raise HTTPException(502, str(e))
 
@@ -81,6 +101,14 @@ def get_purchase(pid: str):
 @app.get("/api/sessions/{sid}/purchases")
 def list_purchases(sid: str):
     return [service.public(p) for p in service.list_for(sid)]
+
+
+@app.post("/api/sessions/{sid}/safety-demo")
+def safety_demo(sid: str, body: DemoIn):
+    """Adds one clearly labelled fake listing to this session's searches. It tries to trick the AI."""
+    store.session(sid)["safety_demo"] = body.on
+    service.trace(sid, "demo", "safety demo on" if body.on else "safety demo off")
+    return {"safety_demo": body.on}
 
 
 @app.get("/api/sessions/{sid}/trace")

@@ -8,7 +8,7 @@ import requests
 
 from . import config
 
-SUPPORTED_CURRENCIES = {"AUD", "USD", "GBP", "EUR", "CAD", "NZD"}
+from .policy import SUPPORTED_CURRENCIES
 
 
 class PayPalError(Exception):
@@ -62,7 +62,8 @@ class PayPalClient:
         return r.json() if r.text else {}
 
     def create_order(self, purchase_id: str, title: str, unit_price: float, quantity: int, currency: str) -> dict:
-        currency = currency if currency in SUPPORTED_CURRENCIES else "USD"
+        if currency not in SUPPORTED_CURRENCIES:  # policy blocks this first; never silently change currency
+            raise PayPalError(f"Unsupported currency {currency}")
         total = f"{unit_price * quantity:.2f}"
         body = {
             "intent": "CAPTURE",

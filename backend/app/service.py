@@ -69,6 +69,11 @@ class PurchaseService:
         product = self.store.session(sid)["products"].get(product_id)
         if not product:
             raise FlowError("That product is not in the latest search results.")
+        # Only one purchase waits at a time, so a later "yes" can never pay for an older forgotten one.
+        for old in self.list_for(sid):
+            if old["status"] in ("awaiting_confirm", "awaiting_family"):
+                old["status"] = "cancelled"
+                self.trace(sid, "cancel", f"{old['id']} replaced by a new choice")
         decision = policy.evaluate(product, quantity, self.store.spent_today(sid), settings())
         status = {
             policy.ALLOW: "awaiting_confirm",
@@ -158,6 +163,13 @@ class PurchaseService:
             self.store.add_spend(p["session_id"], -p["total"])
         self.trace(p["session_id"], "paypal", f"refund {r['refund_id']}")
         return p
+
+    def pending(self, sid: str) -> dict | None:
+        """The newest purchase still waiting on the person or their trusted contact."""
+        for p in self.list_for(sid):
+            if p["status"] in ("awaiting_confirm", "awaiting_family", "awaiting_paypal"):
+                return p
+        return None
 
     def list_for(self, sid: str) -> list[dict]:
         return sorted(

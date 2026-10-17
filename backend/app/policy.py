@@ -9,6 +9,8 @@ import re
 import statistics
 from dataclasses import dataclass, field
 
+SUPPORTED_CURRENCIES = {"AUD", "USD", "GBP", "EUR", "CAD", "NZD"}
+
 ALLOW = "allow"
 NEEDS_FAMILY = "needs_family"
 BLOCK = "block"
@@ -86,7 +88,13 @@ def evaluate(product: dict, quantity: int, spent_today: float, s: Settings) -> D
         block.append("I couldn't confirm the price of this item.")
         return Decision(BLOCK, 0.0, block, checks)
 
-    qty_ok = isinstance(quantity, int) and 1 <= quantity <= s.max_qty
+    currency = str(product.get("currency", "")).upper()
+    cur_ok = currency in SUPPORTED_CURRENCIES
+    check("currency", cur_ok, currency or "unknown")
+    if not cur_ok:
+        block.append("I can't pay in that currency safely, so I won't buy this one.")
+
+    qty_ok = isinstance(quantity, int) and not isinstance(quantity, bool) and 1 <= quantity <= s.max_qty
     check("quantity", qty_ok, f"{quantity} (max {s.max_qty})")
     if not qty_ok:
         block.append(f"Quantity must be between 1 and {s.max_qty}.")
@@ -103,16 +111,25 @@ def evaluate(product: dict, quantity: int, spent_today: float, s: Settings) -> D
     if not within_cap:
         block.append(f"This would go over your daily limit of {s.daily_cap:.0f} dollars.")
 
-    others = [p for p in product.get("other_prices", []) if isinstance(p, (int, float)) and p > 0]
-    if len(others) >= 2:
-        median = statistics.median(others)
+    def _clean(xs):
+        return [x for x in xs or [] if isinstance(x, (int, float)) and x > 0]
+
+    shops = _clean(product.get("other_prices"))
+    peers = _clean(product.get("peer_prices"))
+    if len(shops) >= 2:
+        basis, median, where = "shops", statistics.median(shops), "other shops selling the same item"
+    elif len(peers) >= 3:
+        basis, median, where = "similar items", statistics.median(peers), "similar items I found"
+    else:
+        basis, median, where = None, None, None
+    if basis:
         fair = price <= median * s.price_guard_ratio
-        check("fair_price", fair, f"{price:.2f} vs typical {median:.2f}")
+        check("fair_price", fair, f"{price:.2f} vs typical {median:.2f} ({basis})")
         if not fair:
             pct = round((price / median - 1) * 100)
-            family.append(f"This price is about {pct} percent higher than other shops.")
+            family.append(f"This price is about {pct} percent higher than {where}.")
     else:
-        check("fair_price", True, "not enough other shops to compare")
+        check("fair_price", True, "not enough prices to compare")
 
     under_family = total <= s.family_over
     check("family_threshold", under_family, f"{total:.2f} vs {s.family_over:.2f}")

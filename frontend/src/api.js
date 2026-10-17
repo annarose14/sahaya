@@ -1,13 +1,21 @@
 const BASE = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 async function call(method, path, body) {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error("I can't reach my server. Check your internet connection and try again.");
+  }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+  if (!res.ok) {
+    const detail = Array.isArray(data.detail) ? "That message couldn't be sent. Try something shorter." : data.detail;
+    throw new Error(detail || `Request failed (${res.status})`);
+  }
   return data;
 }
 
@@ -20,6 +28,7 @@ export const api = {
   confirm: (pid) => call("POST", `/api/purchases/${pid}/confirm`),
   cancel: (pid) => call("POST", `/api/purchases/${pid}/cancel`),
   refund: (pid) => call("POST", `/api/purchases/${pid}/refund`),
+  safetyDemo: (sid, on) => call("POST", `/api/sessions/${sid}/safety-demo`, { on }),
   family: (pid, approve) => call("POST", `/api/purchases/${pid}/family`, { approve }),
 };
 

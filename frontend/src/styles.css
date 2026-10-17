@@ -165,3 +165,21 @@ details ol, details ul { list-style: none; padding: 0; margin: 8px 0 0; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Server waking up, or not answering */
+.notice { margin: 20px 0 0; padding: 14px 18px; border-radius: var(--radius-sm); background: var(--surface);
+  border-left: 6px solid var(--marigold); font-size: 1rem; max-width: 60ch; }
+.notice-stop { border-left-color: var(--stop); }
+.linkish { font: inherit; font-weight: 700; color: var(--ink); background: none; border: 0; padding: 0;
+  text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+/* Listings that tried to trick the AI */
+.blocked { margin: 0 0 24px; padding: 18px 20px; border: 2px dashed var(--stop); border-radius: var(--radius-lg); }
+.blocked h2 { margin: 0 0 8px; font-size: 1.05rem; color: var(--stop); }
+.blocked ul { list-style: none; margin: 0; padding: 0; }
+.blocked li { display: grid; gap: 2px; padding: 6px 0; }
+.blocked-title { font-weight: 700; }
+.blocked-meta { color: var(--muted); font-size: 0.9rem; word-break: break-word; }
+
+.demo .switch { align-items: flex-start; margin: 10px 0 4px; max-width: 60ch; }
+.demo .switch input { flex: none; margin-top: 3px; }

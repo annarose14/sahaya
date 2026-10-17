@@ -13,6 +13,7 @@ const HEADINGS = {
 
 const CHECK_NAMES = {
   price_known: "Price confirmed",
+  currency: "A currency PayPal can charge safely",
   quantity: "Sensible quantity",
   listing_safe: "Listing has no hidden instructions",
   daily_cap: "Within your daily limit",

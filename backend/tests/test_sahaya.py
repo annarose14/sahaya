@@ -140,8 +140,9 @@ def test_injected_listing_never_reaches_paypal(svc):
 def test_cap_rechecked_at_confirm(svc):
     a = svc.propose("sid123", "cheap", 5)  # 122.50, needs family (over 50)
     svc.family_decide(a["id"], True)
-    b = svc.propose("sid123", "cheap", 2)  # 49.00, allowed on its own
-    svc.confirm(a["id"]); svc.complete(a["id"])
+    svc.confirm(a["id"])                   # a is now open in PayPal, not yet paid
+    b = svc.propose("sid123", "cheap", 2)  # 49.00, allowed on its own since nothing is spent yet
+    svc.complete(a["id"])                  # a gets paid while b waits
     svc.confirm(b["id"])
     assert b["status"] == "blocked"  # 122.5 + 49 > 150
     assert len(svc.paypal.orders) == 1
@@ -216,13 +217,14 @@ def test_agent_search_then_propose(monkeypatch):
 
     agent = Agent(svc, llm=fake_llm)
     out = agent.chat("sid123", "I need a kettle")
-    assert out["products"] and any(p["simulated"] for p in out["products"])
+    assert out["products"] and not any(p["simulated"] for p in out["products"])  # never shown
+    assert out["ignored"] and "SIMULATED" in out["ignored"][0]["title"]
     tool_payload = json.loads(seen[1][-1]["content"])
     flagged = [r for r in tool_payload["candidates"] if r["listing_flagged"]]
     assert flagged and "ignore previous" not in json.dumps(tool_payload).lower()
 
     out = agent.chat("sid123", "buy the cheapest one, five of them")
-    assert out["purchase"]["status"] == "blocked"
+    assert out["purchase"] is None or out["purchase"]["status"] == "blocked"
     assert svc.paypal.orders == []
 
 
@@ -400,3 +402,26 @@ def test_old_tool_results_are_trimmed(monkeypatch):
     Agent(svc, llm=lambda m: script.pop(0)).chat("sidtrim", "clock")
     tools = [m for m in svc.store.session("sidtrim")["messages"] if m["role"] == "tool"]
     assert tools and all(len(m["content"]) <= 300 + len(" ...(trimmed)") for m in tools)
+
+
+def test_unsupported_currency_is_blocked_not_converted():
+    d = policy.evaluate(product(currency="INR", price=900, other_prices=[]), 1, 0, S)
+    assert d.outcome == policy.BLOCK
+    assert any("currency" in r for r in d.reasons)
+
+
+def test_bool_quantity_is_rejected():
+    assert policy.evaluate(product(), True, 0, S).outcome == policy.BLOCK
+
+
+def test_fair_price_uses_similar_items_when_one_shop():
+    p = product(price=90, other_prices=[90], peer_prices=[25, 30, 28, 35])
+    d = policy.evaluate(p, 1, 0, policy.Settings(500, 500, 5, 1.5))
+    assert d.outcome == policy.NEEDS_FAMILY
+    assert "similar items" in d.reasons[0]
+
+
+def test_fair_price_quiet_when_too_few_prices():
+    p = product(price=90, other_prices=[90], peer_prices=[25])
+    d = policy.evaluate(p, 1, 0, policy.Settings(500, 500, 5, 1.5))
+    assert d.outcome == policy.ALLOW

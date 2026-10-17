@@ -1,5 +1,6 @@
 const LABEL = { user: "You", search: "Search", tool: "Tool", policy: "Safety rules", family: "Trusted contact",
-  paypal: "PayPal", cancel: "Cancelled", reply: "Sahaya", present: "Shown to you" };
+  paypal: "PayPal", cancel: "Cancelled", reply: "Sahaya", present: "Shown to you", blocked: "Blocked listing",
+  answer: "Your answer", demo: "Safety demo", retry: "Retried", error: "Problem" };
 
 export default function Trace({ items }) {
   if (!items?.length) return null;
