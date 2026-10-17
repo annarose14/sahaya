@@ -31,8 +31,8 @@ Online checkouts assume you can see small text, compare prices across tabs and s
 
 | PayPal sandbox test buyer | |
 |---|---|
-| Email | `ADD_SANDBOX_BUYER_EMAIL` |
-| Password | `ADD_SANDBOX_BUYER_PASSWORD` |
+| Email | `` |
+| Password | `` |
 
 This is a PayPal **sandbox** account. No real money moves anywhere in this project.
 
