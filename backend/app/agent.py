@@ -53,7 +53,9 @@ TOOLS = [
         "description": "Search real products from many shops. Returns candidates; then call present_options.",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "What to search for, in a few words"},
-            "max_price": {"type": "number", "description": "Optional maximum price"},
+            # nullable: the model often sends null when there is no budget, and Groq rejects a
+            # tool call whose arguments don't match the schema exactly
+            "max_price": {"type": ["number", "null"], "description": "Maximum price, or null if none given"},
         }, "required": ["query"]},
     }},
     {"type": "function", "function": {
@@ -169,7 +171,11 @@ class Agent:
     def _run_tool(self, sid: str, name: str, args: dict, turn: dict) -> dict:
         sess = self.svc.store.session(sid)
         if name == "search_products":
-            results = catalog.search(str(args.get("query", "")), args.get("max_price"), limit=6,
+            try:
+                max_price = float(args["max_price"]) if args.get("max_price") not in (None, "", 0) else None
+            except (TypeError, ValueError):
+                max_price = None
+            results = catalog.search(str(args.get("query", "")), max_price, limit=6,
                                      inject=bool(sess.get("safety_demo")))
             sess["candidates"] = {p["id"]: p for p in results}
             turn["searched"] = True
@@ -280,8 +286,15 @@ class Agent:
         try:
             return self.llm(msgs)
         except LLMError as e:
-            log.warning("LLM call failed, retrying with short history: %s", e)
             self.svc.trace(sid, "retry", str(e)[:120])
+            if "tool_use_failed" in str(e):
+                # The model wrote a malformed tool call. It's random, so the same request usually works next time.
+                log.warning("Malformed tool call, asking again: %s", str(e)[:160])
+                try:
+                    return self.llm(msgs)
+                except LLMError:
+                    pass
+            log.warning("LLM call failed, retrying with short history: %s", str(e)[:160])
             short = [m for m in msgs if m["role"] == "system"] + [{"role": "user", "content": text}]
             return self.llm(short)
 

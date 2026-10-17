@@ -425,3 +425,39 @@ def test_fair_price_quiet_when_too_few_prices():
     p = product(price=90, other_prices=[90], peer_prices=[25])
     d = policy.evaluate(p, 1, 0, policy.Settings(500, 500, 5, 1.5))
     assert d.outcome == policy.ALLOW
+
+
+def test_search_schema_accepts_null_budget():
+    from app.agent import TOOLS
+    search = next(t for t in TOOLS if t["function"]["name"] == "search_products")
+    assert "null" in search["function"]["parameters"]["properties"]["max_price"]["type"]
+
+
+@pytest.mark.parametrize("budget", [None, "", "40", "forty", 0])
+def test_search_handles_any_budget_value(monkeypatch, budget):
+    monkeypatch.setattr(config, "CHANNEL3_API_KEY", "")
+    from app.fakes import call as c
+    script = [{"tool_calls": [c("1", "search_products", {"query": "kettle", "max_price": budget})]},
+              {"content": "Here you go."}]
+    svc = PurchaseService(Store(), FakePayPal())
+    out = Agent(svc, llm=lambda m: script.pop(0)).chat("sidbudget", "kettle")
+    assert out["products"]  # fallback presents results, no crash
+
+
+def test_malformed_tool_call_is_retried_with_full_history(monkeypatch):
+    from app.agent import LLMError
+    seen = []
+
+    def flaky(msgs):
+        seen.append(len(msgs))
+        if len(seen) == 1:
+            raise LLMError('Groq 400: {"error":{"code":"tool_use_failed"}}')
+        return {"content": "Hello again."}
+
+    svc = PurchaseService(Store(), FakePayPal())
+    agent = Agent(svc, llm=flaky)
+    agent.chat("sidflaky", "first message")
+    seen.clear()
+    out = agent.chat("sidflaky", "second message")
+    assert out["reply"] == "Hello again."
+    assert seen[0] == seen[1]  # retried with the same full history, not a cut down one
