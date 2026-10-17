@@ -377,7 +377,7 @@ def test_rate_limit_waits_then_uses_backup_model(monkeypatch):
 
     calls = []
 
-    def fake_groq(model, messages):
+    def fake_groq(model, messages, tools=True):
         calls.append(model)
         if model == config.GROQ_MODEL:
             return R(429, {"error": {"message": "Please try again in 20s."}})

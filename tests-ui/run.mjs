@@ -289,6 +289,72 @@ try {
     await page.context().close();
   });
 
+  console.log("\nFamily dashboard (AG Grid)");
+  await check("dashboard shows paid and waiting purchases, checked with PayPal", async () => {
+    const page = await freshPage(browser);
+    await page.goto(WEB); await page.waitForSelector(".rules");
+    await type(page, "anything useful");
+    await page.click("text=Choose option 1");
+    await page.waitForSelector("text=Ready to pay");
+    await type(page, "yes");
+    await page.waitForURL(/result=paid/, { timeout: 10000 });
+    await page.click("text=Back to Sahaya");
+    await page.waitForSelector(".rules");
+    await type(page, "anything useful");
+    await page.click("text=Choose option 3");
+    await page.waitForSelector("text=Waiting for your trusted contact");
+    const [dash] = await Promise.all([page.context().waitForEvent("page"), page.click("text=Family dashboard")]);
+    await dash.waitForSelector(".ag-row", { timeout: 15000 });
+    expect((await dash.$$(".ag-center-cols-container .ag-row")).length === 2, "expected 2 rows");
+    await dash.waitForSelector(".pp-ok:has-text('Paid')");
+    await dash.waitForSelector(".pill:has-text('Waiting for you')");
+    expect((await dash.textContent(".tiles")).includes("24.50") || (await dash.textContent(".tiles")).includes("39.00"),
+      "spent today should show the paid amount");
+    expect(!dash.jsErrors, `JS errors: ${dash.jsErrors}`);
+    await page.context().close();
+  });
+
+  await check("dashboard search filters the grid and the ask box answers", async () => {
+    const page = await freshPage(browser);
+    await page.goto(WEB); await page.waitForSelector(".rules");
+    await type(page, "anything useful");
+    await page.click("text=Choose option 1");
+    await page.waitForSelector("text=Ready to pay");
+    await type(page, "no");
+    await type(page, "anything useful");
+    await page.click("text=Choose option 2");
+    await page.waitForSelector("text=Ready to pay");
+    const sid = await page.evaluate(() => localStorage.getItem("sahaya_sid"));
+    await page.goto(`${WEB}/dashboard?sid=${sid}`);
+    await page.waitForSelector(".ag-row");
+    await page.fill(".grid-search input", "kettle");
+    await page.waitForFunction(() => document.querySelectorAll(".ag-center-cols-container .ag-row").length === 1);
+    await page.click("text=How much was spent today?");
+    await page.waitForFunction(() => document.querySelector(".answer").textContent.includes("dollars"), null, { timeout: 8000 });
+    await page.context().close();
+  });
+
+  await check("dashboard has no serious accessibility violations and fits a phone", async () => {
+    const page = await freshPage(browser, { viewport: { width: 375, height: 800 }, isMobile: true });
+    await page.goto(WEB); await page.waitForSelector(".rules");
+    await type(page, "anything useful");
+    await page.click("text=Choose option 3");
+    const sid = await page.evaluate(() => localStorage.getItem("sahaya_sid"));
+    await page.goto(`${WEB}/dashboard?sid=${sid}`);
+    await page.waitForSelector(".phone-cell");
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(over <= 0, `page is ${over}px too wide`);
+    await axe(page, "dashboard");
+    await page.context().close();
+  });
+
+  await check("dashboard link without an id explains the problem", async () => {
+    const page = await freshPage(browser);
+    await page.goto(`${WEB}/dashboard`);
+    await page.waitForSelector("[role=alert]");
+    await page.context().close();
+  });
+
   console.log("\nWhen things go wrong");
   await check("server stops mid conversation: clear message, no crash", async () => {
     const page = await freshPage(browser);

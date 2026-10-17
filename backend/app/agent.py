@@ -110,19 +110,26 @@ def _retry_after(text: str) -> float:
     return v / 1000 if m.group(2) == "ms" else v
 
 
-def _groq(model: str, messages: list[dict]) -> requests.Response:
+def _groq(model: str, messages: list[dict], tools: bool = True) -> requests.Response:
+    body = {"model": model, "messages": messages, "temperature": 0.3, "max_tokens": 1200,
+            # gpt-oss models think before answering; keep it short so replies stay fast
+            **({"reasoning_effort": "low"} if "gpt-oss" in model else {})}
+    if tools:
+        body.update(tools=TOOLS, tool_choice="auto")
     return requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
-        json={"model": model, "messages": messages, "tools": TOOLS,
-              "tool_choice": "auto", "temperature": 0.3, "max_tokens": 1200,
-              # gpt-oss models think before answering; keep it short so replies stay fast
-              **({"reasoning_effort": "low"} if "gpt-oss" in model else {})},
+        json=body,
         timeout=60,
     )
 
 
-def _llm(messages: list[dict]) -> dict:
+def llm_text(messages: list[dict]) -> str:
+    """A plain answer with no tools (used for family dashboard questions)."""
+    return (_llm(messages, tools=False).get("content") or "").strip()
+
+
+def _llm(messages: list[dict], tools: bool = True) -> dict:
     """One model call. On a rate limit: wait briefly and retry, then try the backup model."""
     if not config.GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY is missing. Add it to .env")
@@ -131,7 +138,7 @@ def _llm(messages: list[dict]) -> dict:
         attempts.append(config.GROQ_FALLBACK_MODEL)
     r = None
     for i, model in enumerate(attempts):
-        r = _groq(model, messages)
+        r = _groq(model, messages, tools)
         if r.status_code != 429:
             break
         wait = _retry_after(r.text)
@@ -185,6 +192,9 @@ class Agent:
                     turn["ignored"].append({"title": p["title"], "price": p["price"], "currency": p["currency"],
                                             "shop": p["retailer"], "found": flags[:2]})
                     self.svc.trace(sid, "blocked", f"listing ignored, it contained: {flags[0]}")
+                    sess.setdefault("ignored_log", []).append(
+                        {"t": time.time(), "title": p["title"], "price": p["price"], "currency": p["currency"],
+                         "shop": p["retailer"], "found": flags[0], "query": str(args.get("query", ""))[:80]})
             if not results:
                 sess["shown"], sess["products"] = [], {}
                 turn["products"] = []

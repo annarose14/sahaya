@@ -183,6 +183,7 @@ export default function App() {
       <a className="skip" href="#composer">Skip to talk</a>
       <header className="top">
         <p className="brand"><span className="brand-dot" aria-hidden="true" />Sahaya</p>
+        <a className="toplink" href={`/dashboard?sid=${sid}`} target="_blank" rel="noreferrer">Family dashboard</a>
         <label className="switch">
           <input type="checkbox" checked={voiceOn} onChange={(e) => { setVoiceOn(e.target.checked); stopSpeaking(); }} />
           Read replies aloud

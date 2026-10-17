@@ -44,6 +44,7 @@ export default function Family() {
                 {p.status === "declined" ? "Declined. Nothing will be paid." : "Approved. They'll be asked to confirm and pay with PayPal."}
               </p>
             )}
+            <p className="muted small"><a href={`/dashboard?sid=${p.session_id}`}>See all their purchases</a></p>
           </section>
         )}
       </main>

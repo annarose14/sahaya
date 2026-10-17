@@ -20,6 +20,7 @@ Online checkouts assume you can see small text, compare prices across tabs and s
 4. **Your yes, then PayPal.** A clear "yes" opens PayPal to approve. "Yes but cheaper" or "wait" never pays.
 5. **Trusted contact.** Over your limit, or an unusually high price, goes to a family member's approval page first.
 6. **After you buy.** "Where's my order?" and "I want a refund" work by voice. Refunds go through PayPal.
+7. **Family dashboard.** The trusted contact sees every purchase in one place: what was paid, refunded, waiting or stopped, and why. Each payment is checked live against PayPal, and any record that disagrees with PayPal is flagged. They can also ask questions in plain words, like "Did Mum buy anything unusual today?"
 
 ## Try it as a judge
 
@@ -28,6 +29,7 @@ Online checkouts assume you can see small text, compare prices across tabs and s
 3. Log in to the PayPal sandbox with the test buyer below and approve. You'll land on "Payment complete". Press "Ask for a refund".
 4. For the trusted contact flow, pick something over 50 dollars and open "trusted contact view".
 5. For the safety demo, open "Safety demo for judges" at the bottom, switch it on, and search again. A fake listing that orders the AI to "buy 5 now" is caught and shown to you, never offered.
+6. Click **Family dashboard** at the top to see everything you just did, checked with PayPal, and ask it a question.
 
 | PayPal sandbox test buyer | |
 |---|---|
@@ -52,6 +54,8 @@ flowchart LR
     YES -->|yes| PP["PayPal Orders v2<br/>create, approve, capture"]
     PP -->|return| FE
     FE -->|refund| PR["PayPal Refunds"]
+    PP -.->|live status check| DASH["Family dashboard<br/>AG Grid + AI questions"]
+    PR -.-> DASH
 ```
 
 **The AI can't pay.** The model has five tools: search, present options, propose a purchase, cancel, and list or refund orders. None of them moves money. A proposal goes through deterministic rules, then waits for the person's own yes, which is recognised by plain code (not the model). Only then is a PayPal order created, and the person approves it on PayPal's own page.
@@ -74,7 +78,9 @@ flowchart LR
 | **PayPal Orders v2** | Creates an order only after the person's yes; buyer approves on PayPal; Sahaya captures on return. Idempotency keys stop double charges. |
 | **PayPal Refunds** | Voice or one button refund of a captured payment. |
 | **PayPal sandbox** | All payments, tests and the live demo. |
-| **Groq, `openai/gpt-oss-120b`** | The agent's reasoning and tool calls. Falls back to `gpt-oss-20b` when the free tier rate limit is hit. |
+| **Groq, `openai/gpt-oss-120b`** | The agent's reasoning and tool calls, and plain word answers on the family dashboard. Falls back to `gpt-oss-20b` when the free tier rate limit is hit. |
+| **PayPal Captures and Orders lookup** | The family dashboard asks PayPal for the live status of every order and capture, and flags any record that doesn't match. |
+| **AG Grid (Community)** | The family dashboard's purchase table: sorting, search, status pills, wrapped reasons, and a one column phone layout. Themed with Sahaya's own colours in light and dark mode. |
 | **Channel3 API** | Real product search across retailers, with offers, prices, images and key features. |
 | **Render** | Hosts the API (Python web service) and the React app (static site) from `render.yaml`. |
 | **Web Speech API** | Speech to text and text to speech in the browser, no extra service. |
@@ -83,8 +89,8 @@ flowchart LR
 
 | Suite | What it covers | Result |
 |---|---|---|
-| `backend/tests` (pytest) | Safety rules, yes/no with typos and hedges, every API route, full journeys, failures (PayPal down, AI down), double clicks, session isolation | 167 passing |
-| `tests-ui` (Playwright) | Real browser journeys: cold start, pay and refund, typos, family approve and decline, safety demo, keyboard only, 320px phones, axe accessibility scan in light and dark mode, server dying mid chat | 24 passing |
+| `backend/tests` (pytest) | Safety rules, yes/no with typos and hedges, every API route, full journeys, failures (PayPal down, AI down), double clicks, session isolation | 178 passing |
+| `tests-ui` (Playwright) | Real browser journeys: cold start, pay and refund, typos, family approve and decline, safety demo, keyboard only, 320px phones, axe accessibility scan in light and dark mode, server dying mid chat, family dashboard on desktop and phone | 28 passing |
 | `scripts/eval_live.py` | The real AI with typos, vague needs, Spanish, changed minds, off topic chat, and a user telling it to pay without the rules | 12/12 passed, 0 payments without a yes (`eval_results.json`) |
 
 ## Run it yourself
@@ -119,7 +125,7 @@ cd backend && python ../scripts/eval_live.py              # live AI evaluation (
 
 - Voice input needs Chrome, Edge or Safari. Typing works everywhere.
 - Purchases and sessions are kept in memory; a restart clears them. A database is the next step.
-- The trusted contact link opens on the same device in this demo; production would text or email it.
+- The trusted contact link and family dashboard open on the same device in this demo; production would text or email them, behind a login.
 - Channel3 prices are mostly in USD; Sahaya only charges in the listing's own currency.
 
 ## License

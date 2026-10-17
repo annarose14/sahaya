@@ -28,6 +28,8 @@ export const api = {
   confirm: (pid) => call("POST", `/api/purchases/${pid}/confirm`),
   cancel: (pid) => call("POST", `/api/purchases/${pid}/cancel`),
   refund: (pid) => call("POST", `/api/purchases/${pid}/refund`),
+  dashboard: (sid) => call("GET", `/api/sessions/${sid}/dashboard`),
+  ask: (sid, question) => call("POST", `/api/sessions/${sid}/dashboard/ask`, { question }),
   safetyDemo: (sid, on) => call("POST", `/api/sessions/${sid}/safety-demo`, { on }),
   family: (pid, approve) => call("POST", `/api/purchases/${pid}/family`, { approve }),
 };

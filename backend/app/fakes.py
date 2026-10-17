@@ -33,6 +33,13 @@ class FakePayPal:
         self.captures.append(order_id)
         return {"status": "COMPLETED", "capture_id": f"C-{order_id}", "capture_status": "COMPLETED"}
 
+    def lookup_status(self, order_id, capture_id):
+        if capture_id:
+            return "REFUNDED" if capture_id in self.refunds else "COMPLETED"
+        if order_id:
+            return "PAYER_ACTION_REQUIRED"
+        return None
+
     def refund_capture(self, capture_id):
         self.refunds.append(capture_id)
         return {"refund_id": f"R-{capture_id}", "status": "COMPLETED"}

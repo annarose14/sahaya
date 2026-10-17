@@ -1,6 +1,7 @@
 """Sahaya API."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 
@@ -9,8 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import config
-from .agent import Agent
+from . import config, dashboard
+from .agent import Agent, LLMError, llm_text
 from .paypal import PayPalClient, PayPalError
 from .service import FlowError, PurchaseService, Store
 
@@ -28,6 +29,7 @@ app.add_middleware(
 store = Store()
 service = PurchaseService(store, PayPalClient())
 agent = Agent(service)
+ask_llm = llm_text  # model for family dashboard questions; tests and fake mode swap it
 
 if os.getenv("SAHAYA_FAKE") == "1":
     # Offline mode for UI tests and demos without keys: fake PayPal, scripted AI, demo catalog.
@@ -37,6 +39,12 @@ if os.getenv("SAHAYA_FAKE") == "1":
     config.GROQ_API_KEY = "fake"
     service.paypal = FakePayPal(approve_base=f"{config.BACKEND_URL}/fake-paypal")
     agent.llm = ScriptedShopper()
+
+    def ask_llm(messages):  # noqa: F811  (fake mode: no model, answer from the numbers)
+        data = json.loads(messages[-1]["content"].split("DATA:\n", 1)[1].split("\n\nQUESTION:")[0])
+        s = data["summary"]
+        return (f"{s['paid_count']} paid purchase(s) totalling {s['paid_total']:g} dollars today. "
+                f"Sahaya stopped {s['stopped_count']} and caught {s['tricks_caught']} trick listing(s).")
     log.warning("SAHAYA_FAKE=1: fake PayPal and scripted AI, no real payments or model calls")
 
     @app.get("/fake-paypal/{pid}")
@@ -52,6 +60,10 @@ class ChatIn(BaseModel):
 
 class FamilyIn(BaseModel):
     approve: bool
+
+
+class AskIn(BaseModel):
+    question: str = Field(min_length=2, max_length=300)
 
 
 class DemoIn(BaseModel):
@@ -109,6 +121,21 @@ def safety_demo(sid: str, body: DemoIn):
     store.session(sid)["safety_demo"] = body.on
     service.trace(sid, "demo", "safety demo on" if body.on else "safety demo off")
     return {"safety_demo": body.on}
+
+
+@app.get("/api/sessions/{sid}/dashboard")
+def family_dashboard(sid: str):
+    """Everything Sahaya did for this person, each payment checked live with PayPal."""
+    return dashboard.build(service, sid)
+
+
+@app.post("/api/sessions/{sid}/dashboard/ask")
+def family_ask(sid: str, body: AskIn):
+    try:
+        return {"answer": dashboard.ask(service, sid, body.question, globals()["ask_llm"])}
+    except (LLMError, RuntimeError) as e:
+        log.warning("dashboard ask failed: %s", e)
+        return {"answer": "I can't answer right now. The table below has every purchase."}
 
 
 @app.get("/api/sessions/{sid}/trace")

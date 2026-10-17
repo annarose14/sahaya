@@ -101,6 +101,17 @@ class PayPalClient:
     def get_order(self, order_id: str) -> dict:
         return self._call("GET", f"/v2/checkout/orders/{order_id}")
 
+    def get_capture(self, capture_id: str) -> dict:
+        return self._call("GET", f"/v2/payments/captures/{capture_id}")
+
+    def lookup_status(self, order_id: str | None, capture_id: str | None) -> str | None:
+        """What PayPal itself says about this payment right now (used by the family dashboard)."""
+        if capture_id:
+            return self.get_capture(capture_id).get("status")  # COMPLETED, REFUNDED, PARTIALLY_REFUNDED...
+        if order_id:
+            return self.get_order(order_id).get("status")      # CREATED, APPROVED, COMPLETED...
+        return None
+
     def capture_order(self, order_id: str) -> dict:
         data = self._call("POST", f"/v2/checkout/orders/{order_id}/capture", {}, idem_key=f"cap-{order_id}")
         capture = data["purchase_units"][0]["payments"]["captures"][0]
