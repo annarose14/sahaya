@@ -461,3 +461,42 @@ def test_malformed_tool_call_is_retried_with_full_history(monkeypatch):
     out = agent.chat("sidflaky", "second message")
     assert out["reply"] == "Hello again."
     assert seen[0] == seen[1]  # retried with the same full history, not a cut down one
+
+
+GARBLED = ("Your request has        It looks               Sorry…   …     ... It seems the system   ... Oops   … "
+           "... ... ... ... ... ... The  ... ... ... ... … ... ... ... ... ... ... ... … ... ............ "
+           "I'm sorry, something went wrong. Let's try again.")
+
+
+@pytest.mark.parametrize("text", [GARBLED, "", "... ... ... ... ... ... ...", "sorry " * 40, "?!.,;:" * 20])
+def test_broken_replies_are_detected(text):
+    from app.agent import looks_broken
+    assert looks_broken(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Option 1, Talking alarm clock, 26 dollars. Option 2, Digital speaking clock, 85 dollars. Which one?",
+    "Okay. I've asked your trusted contact to approve it.",
+    "Paris is the capital of France. I can help you find something to buy.",
+])
+def test_normal_replies_pass(text):
+    from app.agent import looks_broken
+    assert not looks_broken(text)
+
+
+def test_garbled_model_reply_is_replaced_with_real_state(monkeypatch):
+    monkeypatch.setattr(config, "CHANNEL3_API_KEY", "")
+    from app.fakes import call as c
+    script = [
+        {"tool_calls": [c("1", "search_products", {"query": "anything useful"})]},
+        {"tool_calls": [c("2", "present_options", {"product_ids": ["demo-kettle", "demo-magnifier"]})]},
+        {"content": "Option 1."},
+        {"tool_calls": [c("3", "propose_purchase", {"option": 2, "quantity": 1})]},
+        {"content": GARBLED},
+    ]
+    svc = PurchaseService(Store(), FakePayPal())
+    agent = Agent(svc, llm=lambda m: script.pop(0))
+    agent.chat("sidgarble", "find things")
+    out = agent.chat("sidgarble", "option 2")
+    assert "..." not in out["reply"]
+    assert "trusted contact" in out["reply"] and "64" in out["reply"]

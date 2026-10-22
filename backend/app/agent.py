@@ -105,6 +105,26 @@ class LLMError(Exception):
     pass
 
 
+MAX_REPLY_CHARS = 700
+
+
+def looks_broken(text: str) -> bool:
+    """Catch the rare glitch where a model loops ('... Sorry ... Okay ...') instead of answering."""
+    t = (text or "").strip()
+    if not t:
+        return True
+    if len(t) > MAX_REPLY_CHARS * 2:
+        return True
+    if t.count("...") + t.count("…") >= 6:
+        return True
+    words = re.findall(r"[a-zA-Z']+", t.lower())
+    if len(words) < 3 and len(t) > 30:
+        return True                       # mostly punctuation
+    if len(words) >= 20 and len(set(words)) / len(words) < 0.35:
+        return True                       # the same few words over and over
+    return False
+
+
 def _retry_after(text: str) -> float:
     """Groq says 'Please try again in 6.6s' or 'in 420ms'."""
     m = re.search(r"try again in ([\d.]+)(ms|s)", text)
@@ -313,6 +333,29 @@ class Agent:
             short = [m for m in msgs if m["role"] == "system"] + [{"role": "user", "content": text}]
             return self.llm(short)
 
+    def _plain_reply(self, sid: str, turn: dict) -> str:
+        """A safe reply written by code from the real state, used when the model's text can't be trusted."""
+        p = turn.get("purchase")
+        if p:
+            money = f"{p['total']:g} {p['currency']}"
+            item = p["product"]["title"].split(",")[0]
+            if p["status"] == "awaiting_confirm":
+                return f"{item}, {money}. Say yes to pay with PayPal, or no to cancel."
+            if p["status"] == "awaiting_family":
+                return f"{item}, {money}. I've asked your trusted contact to approve it first."
+            if p["status"] == "blocked":
+                return " ".join(p["decision"]["reasons"]) or "I had to stop this purchase."
+            if p["status"] == "cancelled":
+                return "Okay, I've cancelled it. Nothing was paid."
+            if p["status"] == "refunded":
+                return "Done. PayPal is refunding your money."
+        shown = self.svc.store.session(sid).get("shown", [])
+        if turn.get("presented") and shown:
+            opts = " ".join(f"Option {i + 1}, {q['title'].split(',')[0]}, {q['price']:g} {q['currency']}."
+                            for i, q in enumerate(shown))
+            return f"{opts} Which one would you like?"
+        return FALLBACK_REPLY
+
     def _answer_pending(self, sid: str, text: str) -> dict | None:
         """A clear yes or no to a pending purchase is handled here by plain code, never by the AI."""
         p = self.svc.pending(sid)
@@ -368,6 +411,12 @@ class Agent:
                 calls = msg.get("tool_calls") or []
                 if not calls:
                     reply = (msg.get("content") or reply).strip()
+                    if looks_broken(reply):
+                        log.warning("Model reply looked broken, using a plain code reply: %r", reply[:120])
+                        self.svc.trace(sid, "retry", "model reply was garbled, replaced")
+                        reply = self._plain_reply(sid, turn)
+                    elif len(reply) > MAX_REPLY_CHARS:
+                        reply = reply[:MAX_REPLY_CHARS].rsplit(". ", 1)[0] + "."
                     break
                 assistant = {"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls}
                 msgs.append(assistant)

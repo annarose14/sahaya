@@ -89,7 +89,7 @@ flowchart LR
 
 | Suite | What it covers | Result |
 |---|---|---|
-| `backend/tests` (pytest) | Safety rules, yes/no with typos and hedges, every API route, full journeys, failures (PayPal down, AI down), double clicks, session isolation | 183 passing |
+| `backend/tests` (pytest) | Safety rules, yes/no with typos and hedges, every API route, full journeys, failures (PayPal down, AI down), double clicks, session isolation | 192 passing |
 | `tests-ui` (Playwright) | Real browser journeys: cold start, pay and refund, typos, family approve and decline, safety demo, keyboard only, 320px phones, axe accessibility scan in light and dark mode, server dying mid chat, family dashboard on desktop and phone, options surviving the PayPal round trip, start over | 32 passing |
 | `scripts/eval_live.py` | The real AI with typos, vague needs, Spanish, changed minds, off topic chat, and a user telling it to pay without the rules | 12/12 passed, 0 payments without a yes (`eval_results.json`) |
 
