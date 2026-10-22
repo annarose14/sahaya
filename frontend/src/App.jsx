@@ -45,8 +45,12 @@ export default function App() {
         clearTimeout(slow);
         setRules(h.rules);
         setServer("up");
-        // Coming back from PayPal: show the latest order again.
-        api.purchases(sid).then((list) => { if (list[0] && list[0].status !== "cancelled") setPurchase(list[0]); }).catch(() => {});
+        // Coming back from PayPal (or a reload): show the same options and latest order again.
+        api.state(sid).then((st) => {
+          setProducts(st.products);
+          setPurchase(st.purchase);
+          setSafetyDemo(st.safety_demo);
+        }).catch(() => {});
         refreshTrace();
         return;
       } catch {
@@ -107,6 +111,25 @@ export default function App() {
     } catch (e) { say(e.message); } finally { setBusy(false); }
   }
 
+  // Read the options on screen aloud again. Done locally: instant, and always matches the screen.
+  function readOptions() {
+    if (!products?.length) return;
+    const text = products.map((p, i) => `Option ${i + 1}. ${p.title.split(",")[0]}. ${money(p.price, p.currency)}`
+      + `${p.retailer ? ` at ${p.retailer}` : ""}.`).join(" ") + " Which one would you like?";
+    say(text);
+  }
+
+  async function startOver() {
+    stopSpeaking();
+    try { await api.reset(sid); } catch {}
+    setProducts([]);
+    setPurchase(null);
+    setIgnored([]);
+    setMessages([{ role: "assistant", text: "Okay, let's start again. What would you like to buy?" }]);
+    if (voiceOn) speak("Okay, let's start again. What would you like to buy?");
+    refreshTrace();
+  }
+
   async function refund() {
     setBusy(true);
     try {
@@ -127,8 +150,8 @@ export default function App() {
     setBusy(true);
     try {
       const res = await api.chat(sid, clean);
-      if (res.products) setProducts(res.products);
-      if (res.products) setIgnored(res.ignored || []);
+      setProducts(res.products || []);           // the server's list is always the truth
+      if (res.searched) setIgnored(res.ignored || []);
       if (res.purchase) setPurchase(res.purchase);
       say(res.reply);
       const p = res.purchase;
@@ -177,6 +200,7 @@ export default function App() {
   });
 
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
 
   return (
     <div className="shell">
@@ -184,6 +208,7 @@ export default function App() {
       <header className="top">
         <p className="brand"><span className="brand-dot" aria-hidden="true" />Sahaya</p>
         <a className="toplink" href={`/dashboard?sid=${sid}`} target="_blank" rel="noreferrer">Family dashboard</a>
+        <button type="button" className="toplink linkish" onClick={startOver} disabled={busy}>Start over</button>
         <label className="switch">
           <input type="checkbox" checked={voiceOn} onChange={(e) => { setVoiceOn(e.target.checked); stopSpeaking(); }} />
           Read replies aloud
@@ -203,6 +228,12 @@ export default function App() {
             <button type="button" className="linkish" onClick={connect}>Try again</button>
           </p>
         )}
+        {lastUser && (
+          <p className="heard">
+            You said: <q>{lastUser.text}</q>
+            {lastUser.text.length < 60 && <span className="heard-hint"> Not right? Just say it again.</span>}
+          </p>
+        )}
         <p className="lead" aria-live="polite">{lastAssistant?.text}</p>
 
         {rules && (
@@ -212,7 +243,8 @@ export default function App() {
         )}
 
         <BlockedNotice items={ignored} />
-        <ProductList products={products} onPick={(n) => send(`Option ${n}`)} />
+        <ProductList products={products} onPick={(n) => send(`Option ${n}`)}
+          onRepeat={readOptions} busy={busy} />
         <PurchasePanel purchase={purchase} busy={busy} onConfirm={confirm} onCancel={cancel} onRefund={refund} />
 
         <details className="history">

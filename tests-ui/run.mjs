@@ -289,6 +289,55 @@ try {
     await page.context().close();
   });
 
+  console.log("\nBugs found by hand testing");
+  await check("after paying and coming back, the options are still on screen and can be picked", async () => {
+    const page = await freshPage(browser);
+    await page.goto(WEB); await page.waitForSelector(".rules");
+    await type(page, "anything useful");
+    await page.click("text=Choose option 1");
+    await page.waitForSelector("text=Ready to pay");
+    await type(page, "yes");
+    await page.waitForURL(/result=paid/, { timeout: 10000 });
+    await page.click("text=Back to Sahaya");
+    await page.waitForSelector(".product", { timeout: 15000 });
+    expect((await page.$$(".product")).length === 3, "options should come back after PayPal");
+    await page.click("text=Choose option 2");
+    await page.waitForSelector("text=Ready to pay");
+    await page.context().close();
+  });
+
+  await check("shows what it heard, so a mishearing is obvious", async () => {
+    const page = await freshPage(browser);
+    await page.goto(WEB); await page.waitForSelector(".rules");
+    await type(page, "token alarm block");
+    expect((await page.textContent(".heard")).includes("token alarm block"), "should show 'You said'");
+    await page.context().close();
+  });
+
+  await check("Start over clears options and the waiting purchase", async () => {
+    const page = await freshPage(browser);
+    await page.goto(WEB); await page.waitForSelector(".rules");
+    await type(page, "anything useful");
+    await page.click("text=Choose option 1");
+    await page.waitForSelector("text=Ready to pay");
+    await page.click("button:has-text('Start over')");
+    await page.waitForFunction(() => !document.querySelector(".product") && !document.querySelector(".panel"));
+    expect((await lead(page)).includes("start again"), "should say it started again");
+    await type(page, "yes");
+    expect(!page.url().includes("done"), "an old yes must not pay after starting over");
+    await page.context().close();
+  });
+
+  await check("'Read them again' re-reads the options without losing them", async () => {
+    const page = await freshPage(browser);
+    await page.goto(WEB); await page.waitForSelector(".rules");
+    await type(page, "anything useful");
+    await page.click("text=Read them again");
+    await page.waitForFunction(() => !document.querySelector("#say").disabled);
+    expect((await page.$$(".product")).length === 3, "options should stay");
+    await page.context().close();
+  });
+
   console.log("\nFamily dashboard (AG Grid)");
   await check("dashboard shows paid and waiting purchases, checked with PayPal", async () => {
     const page = await freshPage(browser);

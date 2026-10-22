@@ -115,6 +115,18 @@ def list_purchases(sid: str):
     return [service.public(p) for p in service.list_for(sid)]
 
 
+@app.get("/api/sessions/{sid}/state")
+def session_state(sid: str):
+    """Options on screen and the latest purchase, so a reload (or coming back from PayPal) shows the same page."""
+    return agent.state(sid)
+
+
+@app.post("/api/sessions/{sid}/reset")
+def session_reset(sid: str):
+    """Start over: clears the conversation and options, cancels anything still waiting. History is kept."""
+    return agent.reset(sid)
+
+
 @app.post("/api/sessions/{sid}/safety-demo")
 def safety_demo(sid: str, body: DemoIn):
     """Adds one clearly labelled fake listing to this session's searches. It tries to trick the AI."""

@@ -29,6 +29,10 @@ How you work:
 - Then ALWAYS call present_options with the ids of up to three candidates that genuinely fit the request,
   best first. Skip toys, cartoon or character themed items, accessories, duplicates and anything unrelated.
   Only presented options are shown on screen and can be bought.
+- Only talk about products that are in "Options on screen now". If the person asks to hear the options
+  again, read those. If none are on screen, search again; never describe products from memory.
+- If a request looks misheard or makes no sense as a product (speech to text can garble words), say what you
+  heard and ask what they meant, in one short sentence.
 - Then read exactly the presented options, in order, as "Option 1", "Option 2", "Option 3". For each say
   the name in a few words, the price, and one useful detail. The screen shows the same numbered list.
 - When the person picks one ("option 2", "the second one", or a name), call propose_purchase with that
@@ -273,7 +277,8 @@ class Agent:
         """Tell the model what is on screen right now, so option numbers always line up."""
         shown = self.svc.store.session(sid).get("shown", [])
         if not shown:
-            return None
+            return {"role": "system", "content": "No options are on screen right now. If the person asks about "
+                    "options or picks one, search again first. Never describe products from memory."}
         lines = [f"Option {n + 1}: {safe_view(p)['title'][:80]}, {p['price']} {p['currency']}"
                  for n, p in enumerate(shown)]
         return {"role": "system", "content": "Options on screen now:\n" + "\n".join(lines)}
@@ -342,7 +347,8 @@ class Agent:
             self.svc.trace(sid, "answer", f"plain code handled: {handled['purchase']['status']}")
             sess["messages"] += [{"role": "user", "content": text[:1000]},
                                  {"role": "assistant", "content": handled["reply"]}]
-            return {"reply": handled["reply"], "products": None, "purchase": self.svc.public(handled["purchase"]),
+            return {"reply": handled["reply"], "products": sess.get("shown", []),
+                    "purchase": self.svc.public(handled["purchase"]),
                     "ignored": []}
         start = len(sess["messages"])
         sess["messages"].append({"role": "user", "content": text[:1000]})
@@ -394,4 +400,25 @@ class Agent:
         sess["messages"].append({"role": "assistant", "content": reply})
         self._compact(sess["messages"], start)
         self.svc.trace(sid, "reply", reply[:120])
-        return {"reply": reply, "products": turn["products"], "purchase": turn["purchase"], "ignored": turn["ignored"]}
+        # Always send what is on screen now, so the page and the voice can never disagree.
+        return {"reply": reply, "products": sess.get("shown", []), "purchase": turn["purchase"],
+                "ignored": turn["ignored"], "searched": turn["searched"]}
+
+    def reset(self, sid: str) -> dict:
+        """Start over: forget the conversation and the options. Purchase history is kept."""
+        sess = self.svc.store.session(sid)
+        p = self.svc.pending(sid)
+        if p and p["status"] in ("awaiting_confirm", "awaiting_family"):
+            self.svc.cancel(p["id"])
+        sess.update(messages=[], candidates={}, shown=[], products={})
+        self.svc.trace(sid, "reset", "started over")
+        return {"ok": True}
+
+    def state(self, sid: str) -> dict:
+        """What the page should show after a reload, for example when coming back from PayPal."""
+        sess = self.svc.store.session(sid)
+        purchases = self.svc.list_for(sid)
+        latest = purchases[0] if purchases and purchases[0]["status"] != "cancelled" else None
+        return {"products": sess.get("shown", []),
+                "purchase": self.svc.public(latest) if latest else None,
+                "safety_demo": bool(sess.get("safety_demo"))}

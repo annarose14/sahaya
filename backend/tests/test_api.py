@@ -255,3 +255,53 @@ def test_sessions_are_isolated(api):
     out = say(api, "yes", sid="personBBB")                # someone else's yes
     assert api.paypal.orders == []
     assert out["purchase"] is None
+
+
+# ---------- screen and voice always match (bugs found by hand testing) ----------
+
+def test_every_reply_carries_the_options_on_screen(api):
+    shop_to_ready(api)
+    out = say(api, "show me my past orders")            # a turn with no new search
+    assert [p["title"][:7] for p in out["products"]] == ["Cordles", "Talking", "LED han"]
+
+
+def test_options_survive_a_page_reload_after_paypal(api):
+    p = shop_to_ready(api)
+    say(api, "yes")
+    api.get(f"/paypal/return?pid={p['id']}", follow_redirects=False)
+    st = api.get("/api/sessions/tester01/state").json()
+    assert len(st["products"]) == 3                     # the page can show the same options again
+    assert st["purchase"]["status"] == "paid"
+    out = say(api, "option 2")                          # and picking one still works
+    assert out["purchase"]["product"]["title"].startswith("Talking")
+
+
+def test_start_over_clears_options_and_cancels_waiting_purchase(api):
+    p = shop_to_ready(api)
+    assert api.post("/api/sessions/tester01/reset").json()["ok"]
+    st = api.get("/api/sessions/tester01/state").json()
+    assert st["products"] == [] and st["purchase"] is None
+    assert api.get(f"/api/purchases/{p['id']}").json()["status"] == "cancelled"
+    assert say(api, "yes")["purchase"] is None           # an old yes can't pay after starting over
+    assert api.paypal.orders == []
+
+
+def test_start_over_keeps_paid_history_for_the_family(api):
+    p = shop_to_ready(api)
+    say(api, "yes")
+    api.get(f"/paypal/return?pid={p['id']}", follow_redirects=False)
+    api.post("/api/sessions/tester01/reset")
+    rows = api.get("/api/sessions/tester01/dashboard").json()["rows"]
+    assert rows and rows[0]["status"] == "paid"
+
+
+def test_model_is_told_when_nothing_is_on_screen(api, monkeypatch):
+    seen = []
+
+    def llm(msgs):
+        seen.append(msgs)
+        return {"content": "What would you like me to look for?"}
+    monkeypatch.setattr(main.agent, "llm", llm)
+    say(api, "option 1")
+    notes = " ".join(m["content"] for m in seen[0] if m["role"] == "system")
+    assert "No options are on screen" in notes

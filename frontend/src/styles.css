@@ -267,3 +267,13 @@ a { color: var(--ink); }
   .tile:nth-child(4) { grid-column: 1 / -1; }
   .tile-num { font-size: 1.6rem; }
 }
+
+/* What speech recognition heard, so a mishearing is obvious */
+.heard { margin: 24px 0 -16px; color: var(--muted); font-size: 0.95rem; max-width: 60ch; }
+.heard q { color: var(--ink); font-weight: 700; quotes: "“" "”"; }
+.heard-hint { white-space: nowrap; }
+.products-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.products-head .small-h { margin: 0; }
+.linkish:disabled { opacity: 0.45; cursor: not-allowed; }
+.top .toplink + .toplink { margin-left: 0; }
+.btn-small { min-height: 44px; padding: 0 16px; font-size: 0.9rem; }
